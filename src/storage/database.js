@@ -51,6 +51,7 @@ export const initDatabase = async () => {
   await addCol('selfDestructAt', 'TEXT');
   await addCol('isChecklist', 'INTEGER DEFAULT 0');
   await addCol('notePassword', 'TEXT');
+  await addCol('deletedAt', 'TEXT');
 
   dbReady = true;
 };
@@ -183,7 +184,13 @@ export const saveNote = async (note) => {
 
 export const moveNoteToTrash = async (id) => {
   const d = await getDb();
-  await d.runAsync('UPDATE notes SET isDeleted = 1 WHERE id = ?', [id]);
+  await d.runAsync('UPDATE notes SET isDeleted = 1, deletedAt = ? WHERE id = ?', [new Date().toISOString(), id]);
+};
+
+export const autoDeleteOldTrash = async () => {
+  const d = await getDb();
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  await d.runAsync('DELETE FROM notes WHERE isDeleted = 1 AND deletedAt IS NOT NULL AND deletedAt <= ?', [cutoff]);
 };
 
 export const restoreNoteFromTrash = async (id) => {

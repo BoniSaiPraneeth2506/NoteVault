@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../theme/ThemeContext';
 import { shadows } from '../theme/colors';
 import {
@@ -99,10 +100,11 @@ export default function HomeScreen({ route, navigation }) {
   }, [notes, activeFilter, searchQuery]);
 
   const handleDelete = (id, title) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     showConfirm(
       'Move to Trash',
       `"${title || 'Untitled'}" will be moved to trash.`,
-      async () => { await moveNoteToTrash(id); loadNotes(); }
+      async () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); await moveNoteToTrash(id); loadNotes(); }
     );
   };
 

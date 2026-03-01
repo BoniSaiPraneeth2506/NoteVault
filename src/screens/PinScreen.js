@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../theme/ThemeContext';
 import { getAppPin, setAppPin, getFakePin, addSecurityLog } from '../storage/database';
 
@@ -70,6 +71,7 @@ export default function PinScreen({ route, navigation }) {
 
   const handleKeyPress = async (num) => {
     if (pin.length >= 4) return;
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newPin = pin + num;
     setPin(newPin);
     if (newPin.length === 4) {
@@ -80,13 +82,16 @@ export default function PinScreen({ route, navigation }) {
         const realPin = await getAppPin();
         const fakePin = await getFakePin();
         if (newPin === realPin) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           await addSecurityLog('pin_unlock', 'Successful PIN unlock');
           navigation.replace('Home');
         } else if (fakePin && newPin === fakePin) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           await addSecurityLog('fake_pin_unlock', 'Fake PIN used');
           navigation.replace('Home', { isFakeMode: true });
         } else {
           setFailCount(f => f + 1);
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           await addSecurityLog('failed_attempt', `Failed PIN attempt #${failCount + 1}`);
           setErrorMsg(failCount >= 2 ? 'Too many failed attempts' : 'Incorrect PIN, try again');
           triggerShake();
@@ -97,7 +102,7 @@ export default function PinScreen({ route, navigation }) {
     }
   };
 
-  const handleDelete = () => setPin(pin.slice(0, -1));
+  const handleDelete = () => { Haptics.selectionAsync(); setPin(pin.slice(0, -1)); };
 
   // ── Loading / branding screen ──
   if (!ready) {

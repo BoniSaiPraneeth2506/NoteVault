@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, TextInput, StyleSheet, TouchableOpacity, ScrollView,
   KeyboardAvoidingView, Platform, Text, Image, Alert, Modal, Pressable,
@@ -10,6 +10,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
 import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../theme/ThemeContext';
 import { noteColors, shadows } from '../theme/colors';
 import { getNoteById, saveNote, moveNoteToTrash } from '../storage/database';
@@ -71,6 +72,46 @@ export default function AddEditNoteScreen({ route, navigation }) {
   const [passwordSetInput, setPasswordSetInput] = useState('');
   const [confirmModal, setConfirmModal] = useState({ visible: false, title: '', message: '', onConfirm: null });
 
+  // Undo/Redo history stack
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const lastSnapshot = useRef({ title: '', content: '' });
+  const isUndoRedo = useRef(false);
+
+  const pushHistory = useCallback((t, c) => {
+    if (isUndoRedo.current) return;
+    const last = lastSnapshot.current;
+    if (t === last.title && c === last.content) return;
+    undoStack.current.push({ title: last.title, content: last.content });
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+    lastSnapshot.current = { title: t, content: c };
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.current.length === 0) return;
+    Haptics.selectionAsync();
+    isUndoRedo.current = true;
+    redoStack.current.push({ title, content });
+    const prev = undoStack.current.pop();
+    setTitle(prev.title);
+    setContent(prev.content);
+    lastSnapshot.current = { title: prev.title, content: prev.content };
+    setTimeout(() => { isUndoRedo.current = false; }, 50);
+  }, [title, content]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.current.length === 0) return;
+    Haptics.selectionAsync();
+    isUndoRedo.current = true;
+    undoStack.current.push({ title, content });
+    const next = redoStack.current.pop();
+    setTitle(next.title);
+    setContent(next.content);
+    lastSnapshot.current = { title: next.title, content: next.content };
+    setTimeout(() => { isUndoRedo.current = false; }, 50);
+  }, [title, content]);
+
   const showConfirm = (title, message, onConfirm) =>
     setConfirmModal({ visible: true, title, message, onConfirm });
   const hideConfirm = () =>
@@ -122,6 +163,19 @@ export default function AddEditNoteScreen({ route, navigation }) {
     noteDataRef.current = { title, content, color, isFavorite, isPinned, images, audioUri, selfDestructAt, isChecklist, notePassword };
   }, [title, content, color, isFavorite, isPinned, images, audioUri, selfDestructAt, isChecklist, notePassword]);
 
+  // Push undo history on debounced content/title changes
+  useEffect(() => {
+    const timer = setTimeout(() => pushHistory(title, content), 500);
+    return () => clearTimeout(timer);
+  }, [title, content, pushHistory]);
+
+  // Word/char count
+  const textForCount = isChecklist
+    ? checklistItems.map(i => i.text).join(' ')
+    : content;
+  const charCount = textForCount.length;
+  const wordCount = textForCount.trim() ? textForCount.trim().split(/\s+/).length : 0;
+
   // Auto-save whenever the user leaves this screen (back arrow, hardware back, swipe, etc.)
   useEffect(() => {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
@@ -157,6 +211,7 @@ export default function AddEditNoteScreen({ route, navigation }) {
   }, [saved]);
 
   const handleSave = async () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     const finalContent = isChecklist ? serializeChecklistItems(checklistItems) : content;
     isSavingRef.current = true;
     await saveNote({
@@ -169,10 +224,11 @@ export default function AddEditNoteScreen({ route, navigation }) {
   };
 
   const handleTrash = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     showConfirm(
       'Move to Trash',
       'This note will be moved to trash.',
-      async () => { isSavingRef.current = true; await moveNoteToTrash(noteIdFinal); navigation.goBack(); }
+      async () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); isSavingRef.current = true; await moveNoteToTrash(noteIdFinal); navigation.goBack(); }
     );
   };
 
@@ -396,6 +452,29 @@ export default function AddEditNoteScreen({ route, navigation }) {
 
           <View style={{ height: 120 }} />
         </ScrollView>
+
+        {/* Word / Character count */}
+        <View style={[styles.wordCountBar, { borderTopColor: t.border, backgroundColor: isDark ? t.card : t.surface }]}>
+          <Text style={[styles.wordCharCount, { color: t.textMuted }]}>
+            {wordCount} word{wordCount !== 1 ? 's' : ''} · {charCount} char{charCount !== 1 ? 's' : ''}
+          </Text>
+          <View style={styles.undoRedoGroup}>
+            <TouchableOpacity
+              onPress={handleUndo}
+              style={[styles.undoRedoBtn, { opacity: undoStack.current.length > 0 ? 1 : 0.3 }]}
+              disabled={undoStack.current.length === 0}
+            >
+              <Feather name="corner-up-left" size={16} color={t.textSecondary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleRedo}
+              style={[styles.undoRedoBtn, { opacity: redoStack.current.length > 0 ? 1 : 0.3 }]}
+              disabled={redoStack.current.length === 0}
+            >
+              <Feather name="corner-up-right" size={16} color={t.textSecondary} />
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {/* ─── Bottom Toolbar ─── */}
         <View style={[styles.toolbar, { backgroundColor: isDark ? t.card : t.surface, borderTopColor: t.border }]}>
@@ -639,7 +718,12 @@ const styles = StyleSheet.create({
   toolbar: {
     borderTopWidth: 1, paddingHorizontal: 12, paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 36 : 24,
   },
-  colorRow: { marginBottom: 10 },
+  colorRow: { marginBottom: 6 },
+  // Word count bar (above toolbar)
+  wordCountBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 5, borderTopWidth: StyleSheet.hairlineWidth },
+  wordCharCount: { fontSize: 11, fontWeight: '500' },
+  undoRedoGroup: { flexDirection: 'row', alignItems: 'center' },
+  undoRedoBtn: { padding: 6, marginLeft: 4 },
   // Feature row
   featureRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 10, gap: 6 },
   featureBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10 },

@@ -401,12 +401,14 @@ export default function SettingsScreen() {
                 : 'Confirm new PIN'}
             </Text>
             <TextInput
+              key={`pin-${pinStep}`}
               style={[styles.pinInput, { color: t.textPrimary, borderColor: t.border, backgroundColor: t.background }]}
               keyboardType="number-pad"
               maxLength={4}
               secureTextEntry
               autoFocus
               value={pinStep === 0 ? oldPin : pinStep === 1 ? newPin : confirmPin}
+              selection={{ start: (pinStep === 0 ? oldPin : pinStep === 1 ? newPin : confirmPin).length, end: (pinStep === 0 ? oldPin : pinStep === 1 ? newPin : confirmPin).length }}
               onChangeText={(val) => {
                 if (pinStep === 0) setOldPin(val);
                 else if (pinStep === 1) setNewPin(val);
@@ -539,7 +541,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 4 },
   modalSubtitle: { fontSize: 14, marginBottom: 20 },
   pinInput: {
-    fontSize: 28, fontWeight: '700', textAlign: 'center', letterSpacing: 16,
+    fontSize: 30, fontWeight: '700', textAlign: 'center',
     borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 20,
   },
   modalBtns: { flexDirection: 'row', justifyContent: 'flex-end' },

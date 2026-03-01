@@ -3,9 +3,10 @@ import { View, Text, StyleSheet, TouchableOpacity, FlatList, Modal, Pressable } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useTheme } from '../theme/ThemeContext';
 import { shadows } from '../theme/colors';
-import { getDeletedNotes, restoreNoteFromTrash, deleteNotePermanently, emptyTrash } from '../storage/database';
+import { getDeletedNotes, restoreNoteFromTrash, deleteNotePermanently, emptyTrash, autoDeleteOldTrash } from '../storage/database';
 
 function formatDate(ts) {
   if (!ts) return '';
@@ -28,6 +29,7 @@ export default function TrashScreen() {
   const hideConfirm = () => setConfirmModal({ visible: false, title: '', message: '', onConfirm: null });
 
   const loadNotes = async () => {
+    await autoDeleteOldTrash();
     const notes = await getDeletedNotes();
     setDeletedNotes(notes);
   };
@@ -35,23 +37,26 @@ export default function TrashScreen() {
   useFocusEffect(useCallback(() => { loadNotes(); }, []));
 
   const handleRestore = async (id) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await restoreNoteFromTrash(id);
     loadNotes();
   };
 
   const handleDelete = (id) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     showConfirm(
       'Delete Permanently',
       'This note will be permanently deleted and cannot be recovered.',
-      async () => { await deleteNotePermanently(id); loadNotes(); }
+      async () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); await deleteNotePermanently(id); loadNotes(); }
     );
   };
 
   const handleEmptyTrash = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     showConfirm(
       'Empty Trash',
       `All ${deletedNotes.length} note${deletedNotes.length !== 1 ? 's' : ''} will be permanently deleted.`,
-      async () => { await emptyTrash(); loadNotes(); }
+      async () => { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); await emptyTrash(); loadNotes(); }
     );
   };
 
@@ -99,9 +104,14 @@ export default function TrashScreen() {
 
       {/* Subheader */}
       <View style={styles.subheader}>
-        <Text style={[styles.itemCount, { color: t.textMuted }]}>
-          {deletedNotes.length} item{deletedNotes.length !== 1 ? 's' : ''} in trash
-        </Text>
+        <View>
+          <Text style={[styles.itemCount, { color: t.textMuted }]}>
+            {deletedNotes.length} item{deletedNotes.length !== 1 ? 's' : ''} in trash
+          </Text>
+          <Text style={[styles.autoDeleteHint, { color: t.textMuted }]}>
+            Auto-deletes after 30 days
+          </Text>
+        </View>
         {deletedNotes.length > 0 && (
           <TouchableOpacity onPress={handleEmptyTrash} style={[styles.emptyBtn, { backgroundColor: t.dangerLight }]}>
             <Feather name="trash" size={14} color={t.danger} />
@@ -170,6 +180,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 12,
   },
   itemCount: { fontSize: 13, fontWeight: '500' },
+  autoDeleteHint: { fontSize: 11, marginTop: 2, fontStyle: 'italic' },
   emptyBtn: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20,

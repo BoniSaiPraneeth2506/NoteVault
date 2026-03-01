@@ -481,7 +481,7 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: '700', marginTop: 16 },
   emptySubtitle: { fontSize: 14, marginTop: 6 },
   fab: {
-    position: 'absolute', bottom: 100, right: 24,
+    position: 'absolute', bottom: 12, right: 24,
     width: 60, height: 60, borderRadius: 18,
     alignItems: 'center', justifyContent: 'center',
   },

@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, ActivityIndicator, StyleSheet, Platform, useColorScheme, AppState } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme as NavDark } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Accelerometer } from 'expo-sensors';
+import * as Font from 'expo-font';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { initDatabase } from './src/storage/database';
@@ -174,10 +175,15 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
+        await Font.loadAsync({
+          ...Feather.font,
+          ...MaterialIcons.font,
+          ...Ionicons.font,
+        });
         await initDatabase();
         setIsReady(true);
       } catch (e) {
-        console.error('Database init failed', e);
+        console.error('App init failed', e);
       }
     })();
   }, []);

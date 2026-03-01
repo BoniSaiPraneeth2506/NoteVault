@@ -7,7 +7,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Accelerometer } from 'expo-sensors';
-import { useFonts } from 'expo-font';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import { initDatabase } from './src/storage/database';
@@ -172,12 +171,6 @@ function AppNavigator() {
 export default function App() {
   const [isReady, setIsReady] = useState(false);
 
-  const [fontsLoaded] = useFonts({
-    Feather: require('expo/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Feather.ttf'),
-    MaterialIcons: require('expo/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/MaterialIcons.ttf'),
-    Ionicons: require('expo/node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/Ionicons.ttf'),
-  });
-
   useEffect(() => {
     (async () => {
       try {
@@ -194,7 +187,7 @@ export default function App() {
   const loadingBg = systemScheme === 'dark' ? '#0F172A' : '#F1F5F9';
   const loadingAccent = systemScheme === 'dark' ? '#818CF8' : '#4F46E5';
 
-  if (!isReady || !fontsLoaded) {
+  if (!isReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: loadingBg }}>
         <ActivityIndicator size="large" color={loadingAccent} />

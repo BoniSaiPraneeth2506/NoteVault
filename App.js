@@ -8,8 +8,26 @@ import { Feather } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { Accelerometer } from 'expo-sensors';
 
+import Constants from 'expo-constants';
+import { preventScreenCaptureAsync } from 'expo-screen-capture';
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
-import { initDatabase } from './src/storage/database';
+import { initDatabase, updateStreak } from './src/storage/database';
+
+// Only initialise notifications in real builds — Expo Go removed Android push support in SDK 53
+const isExpoGo = Constants.appOwnership === 'expo';
+let Notifications = null;
+if (!isExpoGo) {
+  Notifications = require('expo-notifications');
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
+
+
 
 import PinScreen from './src/screens/PinScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -166,8 +184,11 @@ export default function App() {
     (async () => {
       try {
         await initDatabase();
+        await updateStreak(); // track daily usage streak
+        if (Notifications) await Notifications.requestPermissionsAsync();
+        await preventScreenCaptureAsync();
       } catch (e) {
-        console.error('Database init failed', e);
+        console.error('App init error:', e);
       }
       setIsReady(true);
     })();

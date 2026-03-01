@@ -180,7 +180,6 @@ export default function HomeScreen({ route, navigation }) {
 
   const renderNoteCard = ({ item }) => {
     const noteColor = item.color || null;
-    const borderColor = noteColor || t.primary;
     let images = [];
     try { images = JSON.parse(item.images) || []; } catch (_) {}
     const hasAttachments = images.length > 0 || item.audio;
@@ -193,7 +192,7 @@ export default function HomeScreen({ route, navigation }) {
           {
             backgroundColor: t.card,
             borderColor: t.border,
-            borderLeftColor: borderColor,
+            borderLeftColor: noteColor || t.primary,
             borderLeftWidth: 4,
           },
           shadows.sm,
@@ -203,7 +202,7 @@ export default function HomeScreen({ route, navigation }) {
       >
         <View style={styles.noteBody}>
           <View style={styles.noteTitleRow}>
-            <Text style={[styles.noteTitle, { color: t.textPrimary, fontSize: fontSizeMap.noteTitle }]} numberOfLines={1}>
+            <Text style={[styles.noteTitle, { color: noteColor || t.textPrimary, fontSize: fontSizeMap.noteTitle }]} numberOfLines={1}>
               {item.title || 'Untitled'}
             </Text>
             <View style={styles.noteBadges}>
@@ -218,7 +217,7 @@ export default function HomeScreen({ route, navigation }) {
             </View>
           </View>
           {item.content ? (
-            <Text style={[styles.noteContent, { color: t.textSecondary, fontSize: fontSizeMap.noteContent }]} numberOfLines={2}>
+            <Text style={[styles.noteContent, { color: noteColor || t.textSecondary, fontSize: fontSizeMap.noteContent }]} numberOfLines={2}>
               {item.notePassword ? '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022' : item.content.replace(/[*_#\[\]]/g, '')}
             </Text>
           ) : null}

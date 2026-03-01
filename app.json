@@ -38,6 +38,14 @@
       "expo-sqlite",
       "expo-audio",
       [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#4F46E5",
+          "androidMode": "default"
+        }
+      ],
+      [
         "expo-local-authentication",
         {
           "faceIDPermission": "NoteVault uses Face ID to unlock your vault."
@@ -60,7 +68,13 @@
           ]
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "NoteVault uses the camera to silently photograph intruders on failed PIN attempts."
+        }
+      ]
     ],
     "extra": {
       "eas": {

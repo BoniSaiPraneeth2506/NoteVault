@@ -1,16 +1,17 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, Alert, TextInput, Modal, Pressable } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Switch, Alert, TextInput, Modal, Pressable, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useTheme } from '../theme/ThemeContext';
 import {
   getAppPin, setAppPin, getFakePin, setFakePin,
   getAllNotes, deleteAllNotes, getNotesCount, getTrashCount,
   getSecurityLogs, clearSecurityLogs, getDeepVaultPassword, setDeepVaultPassword,
+  getStreak,
 } from '../storage/database';
 
 export default function SettingsScreen() {
@@ -19,6 +20,7 @@ export default function SettingsScreen() {
 
   const [notesCount, setNotesCount] = useState(0);
   const [trashCount, setTrashCount] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [securityLogs, setSecurityLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
   const [deepVaultModal, setDeepVaultModal] = useState(false);
@@ -63,6 +65,7 @@ export default function SettingsScreen() {
       case 'fake_pin_unlock': return 'eye-off';
       case 'failed_attempt': return 'alert-triangle';
       case 'biometric_unlock': return 'smartphone';
+      case 'intruder_selfie': return 'camera';
       default: return 'activity';
     }
   };
@@ -72,6 +75,7 @@ export default function SettingsScreen() {
       case 'fake_pin_unlock': return 'Fake PIN Used';
       case 'failed_attempt': return 'Failed Attempt';
       case 'biometric_unlock': return 'Biometric Unlock';
+      case 'intruder_selfie': return 'Intruder Detected';
       default: return type;
     }
   };
@@ -102,6 +106,7 @@ export default function SettingsScreen() {
       (async () => {
         setNotesCount(await getNotesCount());
         setTrashCount(await getTrashCount());
+        setStreak(await getStreak());
         setSecurityLogs(await getSecurityLogs(20));
         setDeepVaultCurrent(await getDeepVaultPassword());
       })();
@@ -295,6 +300,19 @@ export default function SettingsScreen() {
             </View>
             <Text style={[styles.statBadge, { color: t.danger, backgroundColor: t.dangerLight }]}>{trashCount}</Text>
           </View>
+          <View style={[styles.divider, { backgroundColor: t.border }]} />
+          <View style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconBox, { backgroundColor: t.warningLight }]}>
+                <Text style={{ fontSize: 16 }}>🔥</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingTitle, { color: t.textPrimary }]}>Daily Streak</Text>
+                <Text style={[styles.settingSubtitle, { color: t.textMuted }]}>Consecutive days using NoteVault</Text>
+              </View>
+            </View>
+            <Text style={[styles.statBadge, { color: t.warning, backgroundColor: t.warningLight }]}>{streak}</Text>
+          </View>
         </View>
 
         {/* Security */}
@@ -352,10 +370,18 @@ export default function SettingsScreen() {
                   <View key={log.id || idx}>
                     <View style={[styles.divider, { backgroundColor: t.border }]} />
                     <View style={styles.logRow}>
-                      <Feather name={logIcon(log.event_type)} size={15} color={t.textMuted} style={{ marginRight: 10 }} />
+                      <Feather name={logIcon(log.event_type)} size={15} color={log.event_type === 'intruder_selfie' ? t.danger : t.textMuted} style={{ marginRight: 10 }} />
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.logEvent, { color: t.textPrimary }]}>{logLabel(log.event_type)}</Text>
-                        {log.details ? <Text style={[styles.logDetails, { color: t.textMuted }]}>{log.details}</Text> : null}
+                        <Text style={[styles.logEvent, { color: log.event_type === 'intruder_selfie' ? t.danger : t.textPrimary }]}>{logLabel(log.event_type)}</Text>
+                        {log.event_type === 'intruder_selfie' && log.details ? (
+                          <Image
+                            source={{ uri: log.details }}
+                            style={{ width: 72, height: 72, borderRadius: 8, marginTop: 6 }}
+                            resizeMode="cover"
+                          />
+                        ) : log.details ? (
+                          <Text style={[styles.logDetails, { color: t.textMuted }]}>{log.details}</Text>
+                        ) : null}
                       </View>
                       <Text style={[styles.logTime, { color: t.textMuted }]}>
                         {new Date(log.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}

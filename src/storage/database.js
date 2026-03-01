@@ -52,6 +52,8 @@ export const initDatabase = async () => {
   await addCol('isChecklist', 'INTEGER DEFAULT 0');
   await addCol('notePassword', 'TEXT');
   await addCol('deletedAt', 'TEXT');
+  await addCol('reminder', 'TEXT');
+  await addCol('reminderNotifId', 'TEXT');
 
   dbReady = true;
 };
@@ -101,6 +103,22 @@ export const setFontSize = async (s) => setSetting('font_size', s);
 // Deep vault
 export const getDeepVaultPassword = async () => getSetting('deep_vault_password');
 export const setDeepVaultPassword = async (p) => setSetting('deep_vault_password', p);
+
+// ── App Usage Streak ──────────────────────────────────────────
+const today = () => new Date().toISOString().slice(0, 10);
+const yesterday = () => new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+export const getStreak = async () => parseInt((await getSetting('streak_count')) || '0');
+
+export const updateStreak = async () => {
+  const t = today();
+  const last = await getSetting('last_open_date');
+  if (last === t) return; // already updated today
+  const cur = parseInt((await getSetting('streak_count')) || '0');
+  const newStreak = last === yesterday() ? cur + 1 : 1;
+  await setSetting('last_open_date', t);
+  await setSetting('streak_count', String(newStreak));
+};
 
 // ── Security Log ──────────────────────────────────────
 
@@ -157,7 +175,7 @@ export const cleanupSelfDestructNotes = async () => {
 export const saveNote = async (note) => {
   const d = await getDb();
   const { id, title, content, color, isFavorite, isPinned, isHidden, images, audio,
-          selfDestructAt, isChecklist, notePassword } = note;
+          selfDestructAt, isChecklist, notePassword, reminder, reminderNotifId } = note;
   const timestamp = new Date().toISOString();
 
   const existingNote = await getNoteById(id);
@@ -165,21 +183,42 @@ export const saveNote = async (note) => {
   if (existingNote) {
     await d.runAsync(
       `UPDATE notes SET title=?, content=?, color=?, isFavorite=?, isPinned=?, isHidden=?,
-       images=?, audio=?, timestamp=?, selfDestructAt=?, isChecklist=?, notePassword=? WHERE id=?`,
+       images=?, audio=?, timestamp=?, selfDestructAt=?, isChecklist=?, notePassword=?,
+       reminder=?, reminderNotifId=? WHERE id=?`,
       [title, content, color || null, isFavorite ? 1 : 0, isPinned ? 1 : 0, isHidden || 0,
        JSON.stringify(images || []), audio || null, timestamp,
-       selfDestructAt || null, isChecklist ? 1 : 0, notePassword || null, id]
+       selfDestructAt || null, isChecklist ? 1 : 0, notePassword || null,
+       reminder || null, reminderNotifId || null, id]
     );
   } else {
     await d.runAsync(
       `INSERT INTO notes (id, title, content, color, isFavorite, isPinned, isHidden, isDeleted,
-       images, audio, timestamp, selfDestructAt, isChecklist, notePassword)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+       images, audio, timestamp, selfDestructAt, isChecklist, notePassword, reminder, reminderNotifId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, title, content, color || null, isFavorite ? 1 : 0, isPinned ? 1 : 0, isHidden || 0,
        JSON.stringify(images || []), audio || null, timestamp,
-       selfDestructAt || null, isChecklist ? 1 : 0, notePassword || null]
+       selfDestructAt || null, isChecklist ? 1 : 0, notePassword || null,
+       reminder || null, reminderNotifId || null]
     );
   }
+};
+
+// Duplicate a note (creates a copy with new id)
+export const duplicateNote = async (id) => {
+  const note = await getNoteById(id);
+  if (!note) return null;
+  const d = await getDb();
+  const newId = Math.random().toString(36).substr(2, 15) + Date.now().toString(36);
+  await d.runAsync(
+    `INSERT INTO notes (id, title, content, color, isFavorite, isPinned, isHidden, isDeleted,
+     images, audio, timestamp, selfDestructAt, isChecklist, notePassword)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, ?, ?)`,
+    [newId, `${note.title || 'Untitled'} (Copy)`, note.content, note.color,
+     note.isFavorite, note.isPinned, note.isHidden,
+     note.images, note.audio, new Date().toISOString(),
+     note.isChecklist, note.notePassword]
+  );
+  return newId;
 };
 
 export const moveNoteToTrash = async (id) => {

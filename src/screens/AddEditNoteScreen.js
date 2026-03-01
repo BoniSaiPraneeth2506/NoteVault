@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, TextInput, StyleSheet, TouchableOpacity, ScrollView,
-  KeyboardAvoidingView, Platform, Text, Image, Alert, Modal, Pressable,
+  KeyboardAvoidingView, Platform, Text, Image, Alert, Modal, Pressable, Keyboard, Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { useAudioPlayer, useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Feather, MaterialIcons, Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
+const Notifications = Constants.appOwnership === 'expo' ? null : require('expo-notifications');
 import { useTheme } from '../theme/ThemeContext';
 import { noteColors, shadows } from '../theme/colors';
 import { getNoteById, saveNote, moveNoteToTrash } from '../storage/database';
@@ -62,12 +64,20 @@ export default function AddEditNoteScreen({ route, navigation }) {
   const [images, setImages] = useState([]);
   const [recording, setRecording] = useState(false);
   const [audioUri, setAudioUri] = useState(null);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const [audioCurrentTime, setAudioCurrentTime] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const progressIntervalRef = useRef(null);
   const [saved, setSaved] = useState(false);
   const [selfDestructAt, setSelfDestructAt] = useState(null);
   const [isChecklist, setIsChecklist] = useState(false);
   const [notePassword, setNotePassword] = useState(null);
   const [checklistItems, setChecklistItems] = useState([{ checked: false, text: '' }]);
   const [timerModal, setTimerModal] = useState(false);
+  const [reminderModal, setReminderModal] = useState(false);
+  const [reminderAt, setReminderAt] = useState(null);
+  const [reminderNotifId, setReminderNotifId] = useState(null);
   const [passwordSetModal, setPasswordSetModal] = useState(false);
   const [passwordSetInput, setPasswordSetInput] = useState('');
   const [confirmModal, setConfirmModal] = useState({ visible: false, title: '', message: '', onConfirm: null });
@@ -121,6 +131,16 @@ export default function AddEditNoteScreen({ route, navigation }) {
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const audioPlayer = useAudioPlayer(audioUri ? { uri: audioUri } : null);
 
+  const formatAudioTime = (secs) => {
+    if (!secs || isNaN(secs) || secs <= 0) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Cleanup progress interval on unmount
+  useEffect(() => () => stopProgressTimer(), []);
+
   // Stable ID — generated once, reused across all saves
   const [noteIdFinal] = useState(() =>
     noteId || (Math.random().toString(36).substring(2, 15) + Date.now().toString(36))
@@ -145,6 +165,8 @@ export default function AddEditNoteScreen({ route, navigation }) {
           try { setImages(JSON.parse(note.images) || []); } catch (_) { setImages([]); }
           setAudioUri(note.audio || null);
           setSelfDestructAt(note.selfDestructAt || null);
+          setReminderAt(note.reminder || null);
+          setReminderNotifId(note.reminderNotifId || null);
           setIsChecklist(note.isChecklist === 1);
           setNotePassword(note.notePassword || null);
           if (note.isChecklist === 1 && note.content) {
@@ -160,8 +182,8 @@ export default function AddEditNoteScreen({ route, navigation }) {
 
   // Keep ref in sync with latest state so beforeRemove always has current data
   useEffect(() => {
-    noteDataRef.current = { title, content, color, isFavorite, isPinned, images, audioUri, selfDestructAt, isChecklist, notePassword };
-  }, [title, content, color, isFavorite, isPinned, images, audioUri, selfDestructAt, isChecklist, notePassword]);
+    noteDataRef.current = { title, content, color, isFavorite, isPinned, images, audioUri, selfDestructAt, reminderAt, reminderNotifId, isChecklist, notePassword, checklistItems };
+  }, [title, content, color, isFavorite, isPinned, images, audioUri, selfDestructAt, reminderAt, reminderNotifId, isChecklist, notePassword, checklistItems]);
 
   // Push undo history on debounced content/title changes
   useEffect(() => {
@@ -181,16 +203,18 @@ export default function AddEditNoteScreen({ route, navigation }) {
     const unsubscribe = navigation.addListener('beforeRemove', (e) => {
       if (isSavingRef.current) return; // already saved explicitly, allow navigation
       const d = noteDataRef.current;
-      if (!d.title && !d.content && (!d.images || d.images.length === 0) && !d.audioUri) return;
+      const finalContent = d.isChecklist ? serializeChecklistItems(d.checklistItems || []) : d.content;
+      if (!d.title && !finalContent && (!d.images || d.images.length === 0) && !d.audioUri) return;
 
       e.preventDefault();
       isSavingRef.current = true;
 
       saveNote({
-        id: noteIdFinal, title: d.title, content: d.content, color: d.color,
+        id: noteIdFinal, title: d.title, content: finalContent, color: d.color,
         isFavorite: d.isFavorite, isPinned: d.isPinned,
         isHidden: hiddenFlag, images: d.images, audio: d.audioUri,
         selfDestructAt: d.selfDestructAt, isChecklist: d.isChecklist, notePassword: d.notePassword,
+        reminder: d.reminderAt, reminderNotifId: d.reminderNotifId,
       }).then(() => {
         navigation.dispatch(e.data.action);
       }).catch((err) => {
@@ -211,16 +235,37 @@ export default function AddEditNoteScreen({ route, navigation }) {
   }, [saved]);
 
   const handleSave = async () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    const finalContent = isChecklist ? serializeChecklistItems(checklistItems) : content;
-    isSavingRef.current = true;
-    await saveNote({
-      id: noteIdFinal, title, content: finalContent, color, isFavorite, isPinned,
-      isHidden: hiddenFlag, images, audio: audioUri,
-      selfDestructAt, isChecklist, notePassword,
-    });
-    setSaved(true);
-    navigation.goBack();
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const finalContent = isChecklist ? serializeChecklistItems(checklistItems) : content;
+      // Schedule/reschedule reminder notification
+      let notifId = reminderNotifId;
+      if (reminderAt && Notifications) {
+        if (notifId) { try { await Notifications.cancelScheduledNotificationAsync(notifId); } catch (_) {} }
+        notifId = await Notifications.scheduleNotificationAsync({
+          content: { title: 'NoteVault Reminder', body: title || 'You have a note reminder' },
+          trigger: { type: 'date', date: new Date(reminderAt) },
+        });
+        setReminderNotifId(notifId);
+      } else if (!reminderAt && notifId && Notifications) {
+        try { await Notifications.cancelScheduledNotificationAsync(notifId); } catch (_) {}
+        setReminderNotifId(null);
+        notifId = null;
+      }
+      isSavingRef.current = true;
+      await saveNote({
+        id: noteIdFinal, title, content: finalContent, color, isFavorite, isPinned,
+        isHidden: hiddenFlag, images, audio: audioUri,
+        selfDestructAt, isChecklist, notePassword,
+        reminder: reminderAt, reminderNotifId: notifId,
+      });
+      setSaved(true);
+      navigation.goBack();
+    } catch (err) {
+      console.error('Save failed:', err);
+      isSavingRef.current = false;
+      Alert.alert('Save Error', 'Failed to save note. Please try again.');
+    }
   };
 
   const handleTrash = () => {
@@ -254,23 +299,55 @@ export default function AddEditNoteScreen({ route, navigation }) {
     try {
       const status = await AudioModule.requestRecordingPermissionsAsync();
       if (!status.granted) { Alert.alert('Permission needed', 'Microphone permission is required.'); return; }
+      await audioRecorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
       audioRecorder.record();
       setRecording(true);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error('startRecording error:', err); Alert.alert('Recording Error', err.message || 'Could not start recording.'); }
   };
 
   const stopRecording = async () => {
     try {
       await audioRecorder.stop();
-      setAudioUri(audioRecorder.uri);
-      setRecording(false);
-    } catch (err) { console.error(err); }
+      const tempUri = audioRecorder.uri;
+      if (tempUri) {
+        const ext = tempUri.split('.').pop() || 'm4a';
+        const destUri = `${FileSystem.documentDirectory}audio_${Date.now()}.${ext}`;
+        await FileSystem.copyAsync({ from: tempUri, to: destUri });
+        setAudioUri(destUri);
+      }
+    } catch (err) { console.error('stopRecording error:', err); }
+    setRecording(false);
   };
 
-  const playSound = () => {
-    if (audioPlayer) {
+  const stopProgressTimer = () => {
+    if (progressIntervalRef.current) { clearInterval(progressIntervalRef.current); progressIntervalRef.current = null; }
+  };
+
+  const togglePlayback = () => {
+    if (!audioPlayer) return;
+    if (isAudioPlaying) {
+      audioPlayer.pause();
+      stopProgressTimer();
+      setIsAudioPlaying(false);
+    } else {
       audioPlayer.seekTo(0);
       audioPlayer.play();
+      setIsAudioPlaying(true);
+      progressIntervalRef.current = setInterval(() => {
+        const cur = audioPlayer.currentTime ?? 0;
+        const dur = audioPlayer.duration ?? 0;
+        setAudioCurrentTime(cur);
+        if (dur > 0) {
+          setAudioDuration(dur);
+          setAudioProgress(Math.min(cur / dur, 1));
+        }
+        if (dur > 0 && cur >= dur - 0.15) {
+          stopProgressTimer();
+          setIsAudioPlaying(false);
+          setAudioProgress(0);
+          setAudioCurrentTime(0);
+        }
+      }, 80);
     }
   };
 
@@ -314,15 +391,32 @@ export default function AddEditNoteScreen({ route, navigation }) {
     }
   };
 
-  // Default bg uses surface (card-like) in dark mode, background in light
-  // When a note color is set, dim it in dark mode so it's not blinding
-  const bgColor = color
-    ? (isDark ? dimColor(color, 0.4) : color)
-    : (isDark ? t.surface : t.background);
+  // Default bg — no page coloring, color is for text now
+  const bgColor = isDark ? t.surface : t.background;
+  const textColor = color || t.textSecondary;
+
+  // Animated keyboard padding — smooth slide up/down
+  const kbAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const animTo = (h) => Animated.timing(kbAnim, {
+      toValue: h,
+      duration: 280,
+      useNativeDriver: false,
+    }).start();
+    const show = Keyboard.addListener(
+      Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
+      e => animTo(e.endCoordinates.height + 8)
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide',
+      () => animTo(0)
+    );
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bgColor }]} edges={['top']}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+      <Animated.View style={{ flex: 1, paddingBottom: kbAnim }}>
 
         {/* ─── Header ─── */}
         <View style={styles.header}>
@@ -348,7 +442,11 @@ export default function AddEditNoteScreen({ route, navigation }) {
         </View>
 
         {/* ─── Content ─── */}
-        <ScrollView style={styles.body} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          style={styles.body}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           <TextInput
             style={[styles.titleInput, { color: t.textPrimary, fontSize: fontSizeMap.titleInput }]}
             placeholder="Note title"
@@ -385,7 +483,7 @@ export default function AddEditNoteScreen({ route, navigation }) {
                   <TextInput
                     style={[
                       styles.checklistInput,
-                      { color: t.textPrimary, fontSize: fontSizeMap.bodyInput },
+                      { color: textColor, fontSize: fontSizeMap.bodyInput },
                       item.checked && { textDecorationLine: 'line-through', opacity: 0.5 },
                     ]}
                     value={item.text}
@@ -413,7 +511,7 @@ export default function AddEditNoteScreen({ route, navigation }) {
             </View>
           ) : (
             <TextInput
-              style={[styles.bodyInput, { color: t.textSecondary, fontSize: fontSizeMap.bodyInput }]}
+              style={[styles.bodyInput, { color: textColor, fontSize: fontSizeMap.bodyInput }]}
               placeholder="Start writing..."
               placeholderTextColor={t.textMuted}
               value={content}
@@ -437,16 +535,36 @@ export default function AddEditNoteScreen({ route, navigation }) {
             </View>
           )}
 
-          {/* Audio */}
+          {/* Audio Player */}
           {audioUri && (
-            <View style={[styles.audioBox, { backgroundColor: t.primaryLight }]}>
-              <TouchableOpacity onPress={playSound} style={[styles.audioPlayBtn, { backgroundColor: t.primary }]}>
-                <Ionicons name="play" size={16} color="#FFF" />
-                <Text style={styles.audioPlayText}>Play Voice Note</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setAudioUri(null)} style={styles.audioRemoveBtn}>
-                <Feather name="trash-2" size={18} color={t.danger} />
-              </TouchableOpacity>
+            <View style={[styles.audioCard, { backgroundColor: t.card, borderColor: t.border }]}>
+              <View style={styles.audioCardTop}>
+                <View style={[styles.audioIconBox, { backgroundColor: t.primaryLight }]}>
+                  <Feather name="mic" size={16} color={t.primary} />
+                </View>
+                <View style={{ flex: 1, marginHorizontal: 12 }}>
+                  <Text style={[styles.audioLabel, { color: t.textPrimary }]}>Voice Note</Text>
+                  <Text style={[styles.audioTimeText, { color: t.textMuted }]}>
+                    {formatAudioTime(audioCurrentTime)} / {formatAudioTime(audioDuration || (audioPlayer?.duration ?? 0))}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={togglePlayback}
+                  style={[styles.audioPlayCircle, { backgroundColor: t.primary }]}
+                >
+                  <Ionicons name={isAudioPlaying ? 'pause' : 'play'} size={13} color="#FFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => { audioPlayer?.pause(); stopProgressTimer(); setIsAudioPlaying(false); setAudioUri(null); setAudioProgress(0); setAudioCurrentTime(0); }}
+                  style={{ padding: 8, marginLeft: 6 }}
+                >
+                  <Feather name="trash-2" size={16} color={t.danger} />
+                </TouchableOpacity>
+              </View>
+              {/* Progress timeline */}
+              <View style={[styles.audioProgressTrack, { backgroundColor: t.border }]}>
+                <View style={[styles.audioProgressFill, { backgroundColor: t.primary, width: `${audioProgress * 100}%` }]} />
+              </View>
             </View>
           )}
 
@@ -478,8 +596,9 @@ export default function AddEditNoteScreen({ route, navigation }) {
 
         {/* ─── Bottom Toolbar ─── */}
         <View style={[styles.toolbar, { backgroundColor: isDark ? t.card : t.surface, borderTopColor: t.border }]}>
-          {/* Color picker row */}
+          {/* Text color picker row */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorRow} contentContainerStyle={{ alignItems: 'center' }}>
+            <Feather name="edit-3" size={15} color={t.textMuted} style={{ marginRight: 8 }} />
             {noteColors.map((c) => {
               const isDefault = c.value === null;
               const isActive = color === c.value;
@@ -515,6 +634,12 @@ export default function AddEditNoteScreen({ route, navigation }) {
             >
               <Feather name="clock" size={16} color={selfDestructAt ? t.danger : t.textMuted} />
               <Text style={[styles.featureBtnText, { color: selfDestructAt ? t.danger : t.textMuted }]}>Timer</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setReminderModal(true)}
+              style={[styles.featureBtn, { backgroundColor: reminderAt ? t.primaryLight : t.background }]}
+            >
+              <Feather name="bell" size={16} color={reminderAt ? t.primary : t.textMuted} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { setPasswordSetInput(notePassword || ''); setPasswordSetModal(true); }}
@@ -578,7 +703,7 @@ export default function AddEditNoteScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </Animated.View>
 
       {/* Confirm Modal */}
       <Modal visible={confirmModal.visible} transparent animationType="fade" onRequestClose={hideConfirm}>
@@ -598,6 +723,44 @@ export default function AddEditNoteScreen({ route, navigation }) {
                 <Text style={[styles.modalBtnText, { color: t.danger }]}>Trash</Text>
               </TouchableOpacity>
             </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Reminder Modal */}
+      <Modal visible={reminderModal} transparent animationType="fade" onRequestClose={() => setReminderModal(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setReminderModal(false)}>
+          <Pressable style={[styles.modalCard, { backgroundColor: t.card }]}>
+            <Text style={[styles.modalTitle, { color: t.textPrimary }]}>Set Reminder</Text>
+            <Text style={[styles.modalMessage, { color: t.textMuted }]}>Get notified about this note</Text>
+            {[
+              { label: 'In 30 minutes', ms: 30 * 60 * 1000 },
+              { label: 'In 1 hour', ms: 60 * 60 * 1000 },
+              { label: 'In 4 hours', ms: 4 * 60 * 60 * 1000 },
+              { label: 'Tomorrow', ms: 24 * 60 * 60 * 1000 },
+              { label: 'In 1 week', ms: 7 * 24 * 60 * 60 * 1000 },
+            ].map((opt) => (
+              <TouchableOpacity
+                key={opt.label}
+                style={[styles.timerOption, { borderColor: t.border }]}
+                onPress={() => {
+                  setReminderAt(new Date(Date.now() + opt.ms).toISOString());
+                  setReminderModal(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.timerOptionText, { color: t.textPrimary }]}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+            {reminderAt && (
+              <TouchableOpacity
+                style={[styles.timerOption, { borderColor: t.border }]}
+                onPress={() => { setReminderAt(null); setReminderModal(false); }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.timerOptionText, { color: t.danger }]}>Remove Reminder</Text>
+              </TouchableOpacity>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -703,22 +866,32 @@ const styles = StyleSheet.create({
     width: 20, height: 20, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center',
   },
-  // Audio
-  audioBox: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    padding: 12, borderRadius: 12, marginTop: 12,
+  // Audio player card
+  audioCard: {
+    borderRadius: 14, borderWidth: 1, marginTop: 12, overflow: 'hidden',
   },
-  audioPlayBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
+  audioCardTop: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10,
   },
-  audioPlayText: { color: '#FFF', fontSize: 13, fontWeight: '600', marginLeft: 8 },
-  audioRemoveBtn: { padding: 8 },
+  audioIconBox: {
+    width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+  },
+  audioLabel: { fontSize: 13, fontWeight: '700' },
+  audioTimeText: { fontSize: 11, marginTop: 2 },
+  audioPlayCircle: {
+    width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+  },
+  audioProgressTrack: {
+    height: 3, width: '100%',
+  },
+  audioProgressFill: {
+    height: 3,
+  },
   // Toolbar
   toolbar: {
     borderTopWidth: 1, paddingHorizontal: 12, paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 36 : 24,
   },
-  colorRow: { marginBottom: 6 },
+  colorRow: { marginBottom: 16 },
   // Word count bar (above toolbar)
   wordCountBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 5, borderTopWidth: StyleSheet.hairlineWidth },
   wordCharCount: { fontSize: 11, fontWeight: '500' },

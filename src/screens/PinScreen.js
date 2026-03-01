@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native
 import { Feather } from '@expo/vector-icons';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as Haptics from 'expo-haptics';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useTheme } from '../theme/ThemeContext';
 import { getAppPin, setAppPin, getFakePin, addSecurityLog } from '../storage/database';
 
@@ -15,14 +17,18 @@ export default function PinScreen({ route, navigation }) {
   const [biometricAvailable, setBiometricAvailable] = useState(false);
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const cameraRef = useRef(null);
   const { theme, loaded, biometricEnabled } = useTheme();
   const t = theme;
+  const [camPermission, requestCamPermission] = useCameraPermissions();
 
   useEffect(() => {
     if (!loaded) return;
     (async () => {
       const existingPin = await getAppPin();
       setIsSetup(!existingPin);
+      // Request camera permission for intruder detection
+      requestCamPermission();
       // Check biometric availability
       if (existingPin && biometricEnabled) {
         try {
@@ -97,6 +103,18 @@ export default function PinScreen({ route, navigation }) {
           triggerShake();
           setPin('');
           setTimeout(() => setErrorMsg(''), 2000);
+          // Silently capture intruder selfie
+          try {
+            if (cameraRef.current) {
+              const photo = await cameraRef.current.takePictureAsync({ quality: 0.4, skipProcessing: true });
+              const dir = FileSystem.documentDirectory + 'intruder/';
+              const dirInfo = await FileSystem.getInfoAsync(dir);
+              if (!dirInfo.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+              const destUri = dir + `intruder_${Date.now()}.jpg`;
+              await FileSystem.copyAsync({ from: photo.uri, to: destUri });
+              await addSecurityLog('intruder_selfie', destUri);
+            }
+          } catch (_) {}
         }
       }
     }
@@ -120,6 +138,12 @@ export default function PinScreen({ route, navigation }) {
   // ── PIN entry screen ──
   return (
     <View style={[styles.container, { backgroundColor: t.background }]}>
+      {/* Hidden front camera for intruder selfie */}
+      <CameraView
+        ref={cameraRef}
+        facing="front"
+        style={{ width: 1, height: 1, position: 'absolute', top: 0, left: 0, opacity: 0 }}
+      />
       <Animated.View style={[styles.pinContent, { opacity: fadeAnim }]}>
         <View style={[styles.iconWrap, { backgroundColor: t.primaryLight }]}>
           <Feather name="shield" size={30} color={t.primary} />
